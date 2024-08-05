@@ -1,105 +1,77 @@
 import os
 import mechanicalsoup as ms
 import redis
-import configparser
-from elasticsearch import Elasticsearch, helpers
-from neo4j import GraphDatabase
+from pymongo import MongoClient
 
-class Neo4JConnector:
-    def __init__(self, uri, user, password):
-        self.driver = GraphDatabase.driver(uri, auth=(user, password))
+MAX_PAGES = 100  # Set the maximum number of pages to crawl
+TARGET_URL = "https://store.steampowered.com/app/1593500/God_of_War/"  # End goal URL
+
+class MongoDBConnector:
+    def __init__(self, uri, db_name):
+        self.client = MongoClient(uri)
+        self.db = self.client[db_name]
 
     def close(self):
-        self.driver.close()
+        self.client.close()
 
     def add_links(self, page, links):
-        with self.driver.session() as session: 
-            session.execute_write(self._create_links, page, links)
+        page = page.decode('utf-8')
+        self.db.pages.insert_one({'url': page, 'links': links})
+        print(f"Added page: {page} with links: {links}")
 
     def flush_db(self):
-        print("clearing graph db")
-        with self.driver.session() as session: 
-            session.execute_write(self._flush_db)
-    
-    @staticmethod
-    def _create_links(tx, page, links):
-        # because Redis stores strings as ByteStrings,
-        # we must decode our url into a string of a specific encoding
-        # for it to be valid JSON
-        page = page.decode('utf-8')
-        tx.run("CREATE (:Page { url: $page })", page=page)
-        for link in links:
-            tx.run("MATCH (p:Page) WHERE p.url = $page "
-                   "CREATE (:Page { url: $link }) -[:LINKS_TO]-> (p)",
-                   link=link, page=page)
+        print("Clearing MongoDB")
+        self.db.pages.delete_many({})
 
-    @staticmethod
-    def _flush_db(tx):
-        tx.run("MATCH (a) -[r]-> () DELETE a, r")
-        tx.run("MATCH (a) DELETE a")
+def write_to_mongo(db, url, html):
+    # Skipping storing the HTML for faster performance
+    pass
 
-
-
-
-def write_to_elastic(es, url, html):
-    # because Redis stores strings as ByteStrings,
-    # we must decode our url into a string of a specific encoding
-    # for it to be valid JSON
-    url = url.decode('utf-8') 
-    es.index(index='scrape', document={ 'url': url, 'html': html })
-
-def crawl(browser, r, es, neo, url):
-    # Download url
-    print("Downloading url")
+def crawl(browser, r, mongo, url, crawled_count):
+    if crawled_count >= MAX_PAGES:
+        return False  # Stop crawling
+    print("Downloading url:", url)
     browser.open(url)
 
-    # Cache page to elasticsearch
-    write_to_elastic(es, url, str(browser.page))
+    # Check if we have reached the target URL
+    if url.decode('utf-8') == TARGET_URL:
+        print("Found the target page!")
+        return False
 
-    # Parse for more urls
+    # Parse the page content for links
     print("Parsing for more links")
     a_tags = browser.page.find_all("a")
-    hrefs = [ a.get("href") for a in a_tags ]
+    hrefs = [a.get("href") for a in a_tags if a.get("href")]
 
-    # Do wikipedia specific URL filtering
-    wikipedia_domain = "https://en.wikipedia.org"
-    links = [ wikipedia_domain + a for a in hrefs if a and a.startswith("/wiki/") ]
+    steam_store_domain = "https://store.steampowered.com"
+    links = []
+    for href in hrefs:
+        if href.startswith("/app/") or href.startswith("https://store.steampowered.com/app/"):
+            full_link = steam_store_domain + href if href.startswith("/app/") else href
+            if full_link != url.decode('utf-8'):
+                links.append(full_link)
 
-    # Put urls in Redis queue
-    # create a linked list in Redis, call it "links"
-    print("Pushing links onto Redis")
-    r.lpush("links", *links)
+    # Remove duplicates
+    links = list(set(links))
 
-    # Add links to Neo4J graph
-    neo.add_links(url, links)
+    print("Valid links found:", links)
+
+    # Push valid links onto Redis
+    if links:
+        r.lpush("links", *links)
+        mongo.add_links(url, links)
+    else:
+        print("No valid links found on this page.")
+
+    return True
 
 ### MAIN ###
 
-# Initialize Neo4j
-neo = Neo4JConnector("bolt://localhost:7689", "neo4j", "db_is_awesom3")
-neo.flush_db()
+# Initialize MongoDB (Replace with your MongoDB Atlas connection string)
+mongo = MongoDBConnector("mongodb+srv://mcootauc:8fG1xnTUWWnkMoZ8@cluster1.dztsxzq.mongodb.net/web_crawler?retryWrites=true&w=majority&appName=Cluster1", "web_crawler")
 
-# Initialize Elasticsearch
-config = configparser.ConfigParser()
-config.read('example.ini')
-#print(config.read('example.ini'))
-
-# connecting to local elastic cluster
-username = 'elastic'
-password = os.getenv('ELASTIC_PASSWORD') # Value you set in the environment variable
-
-es = Elasticsearch(
-    "http://localhost:9200",
-    basic_auth=(username, password)
-)
-
-# print(es.info())
-
-# connecting to elastic cloud
-es = Elasticsearch(
-  "https://3580797118cb4aaca6b0d249ee69c696.us-west-1.aws.found.io:443",
-  api_key="U3Vham41QUJoZlFKcGMxLUVKbnc6M0phY2EyaVNRYkNMeC1WNFVfWnZqZw=="
-)
+# Clear the database before starting the crawl
+mongo.flush_db()
 
 # Initialize Redis
 r = redis.Redis()
@@ -108,13 +80,16 @@ r.flushall()
 # Initialize MechanicalSoup headless browser
 browser = ms.StatefulBrowser()
 
-# Add root url as the entrypoint to our crawl
-start_url = "https://en.wikipedia.org/wiki/Redis"
+# Add root URL as the entry point to our crawl
+start_url = "https://store.steampowered.com/app/208650/Batman_Arkham_Knight/"
 r.lpush("links", start_url)
 
 # Start crawl
+crawled_count = 0
 while link := r.rpop("links"):
-    crawl(browser, r, es, neo, link)
+    if not crawl(browser, r, mongo, link, crawled_count):
+        break
+    crawled_count += 1
 
-# Close connection to Neo4j
-neo.close()
+# Close connection to MongoDB
+mongo.close()
