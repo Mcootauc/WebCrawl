@@ -5,7 +5,6 @@ from pymongo import MongoClient
 from urllib.parse import urlparse, urlunparse
 import time
 
-MAX_PAGES = 500  # Increase the maximum number of pages to crawl
 TARGET_URL = "https://store.steampowered.com/app/1593500/God_of_War/"  # End goal URL
 STEAM_STORE_DOMAIN = "https://store.steampowered.com"
 RETRY_LIMIT = 3  # Number of times to retry loading a page if it fails
@@ -27,18 +26,12 @@ class MongoDBConnector:
         print("Clearing MongoDB")
         self.db.pages.delete_many({})
 
-def write_to_mongo(db, url, html):
-    # Skipping storing the HTML for faster performance
-    pass
-
 def normalize_url(url):
     parsed_url = urlparse(url)
     # Remove query parameters for normalization
     return urlunparse((parsed_url.scheme, parsed_url.netloc, parsed_url.path, '', '', ''))
 
-def crawl(browser, r, mongo, url, crawled_count, graveyard):
-    if crawled_count >= MAX_PAGES:
-        return False  # Stop crawling
+def crawl(browser, r, mongo, url, graveyard):
     url = url.decode('utf-8')
     print("Downloading url:", url)
 
@@ -124,9 +117,11 @@ graveyard = set()
 # Start crawl
 crawled_count = 0
 while link := r.rpop("links"):
-    if not crawl(browser, r, mongo, link, crawled_count, graveyard):
+    if not crawl(browser, r, mongo, link, graveyard):
         break
     crawled_count += 1
 
 # Close connection to MongoDB
 mongo.close()
+
+print(f"Crawl completed. Total pages crawled: {crawled_count}")
