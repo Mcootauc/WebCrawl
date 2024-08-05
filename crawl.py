@@ -2,9 +2,13 @@ import os
 import mechanicalsoup as ms
 import redis
 from pymongo import MongoClient
+from urllib.parse import urlparse, urlunparse
+import time
 
-MAX_PAGES = 100  # Set the maximum number of pages to crawl
+MAX_PAGES = 500  # Increase the maximum number of pages to crawl
 TARGET_URL = "https://store.steampowered.com/app/1593500/God_of_War/"  # End goal URL
+STEAM_STORE_DOMAIN = "https://store.steampowered.com"
+RETRY_LIMIT = 3  # Number of times to retry loading a page if it fails
 
 class MongoDBConnector:
     def __init__(self, uri, db_name):
@@ -27,39 +31,66 @@ def write_to_mongo(db, url, html):
     # Skipping storing the HTML for faster performance
     pass
 
-def crawl(browser, r, mongo, url, crawled_count):
+def normalize_url(url):
+    parsed_url = urlparse(url)
+    # Remove query parameters for normalization
+    return urlunparse((parsed_url.scheme, parsed_url.netloc, parsed_url.path, '', '', ''))
+
+def crawl(browser, r, mongo, url, crawled_count, graveyard):
     if crawled_count >= MAX_PAGES:
         return False  # Stop crawling
+    url = url.decode('utf-8')
     print("Downloading url:", url)
-    browser.open(url)
+
+    # Retry logic
+    retries = 0
+    while retries < RETRY_LIMIT:
+        try:
+            browser.open(url)
+            if browser.page is not None:
+                break
+        except Exception as e:
+            print(f"Error loading {url}: {e}")
+        retries += 1
+        time.sleep(1)  # Wait a bit before retrying
+
+    if browser.page is None:
+        print(f"Failed to load {url} after {RETRY_LIMIT} retries")
+        return True
 
     # Check if we have reached the target URL
-    if url.decode('utf-8') == TARGET_URL:
+    if url == TARGET_URL:
         print("Found the target page!")
         return False
+
+    # Normalize current URL to avoid looping back to it
+    normalized_current_url = normalize_url(url)
+    graveyard.add(normalized_current_url)  # Add current URL to graveyard
 
     # Parse the page content for links
     print("Parsing for more links")
     a_tags = browser.page.find_all("a")
     hrefs = [a.get("href") for a in a_tags if a.get("href")]
 
-    steam_store_domain = "https://store.steampowered.com"
     links = []
     for href in hrefs:
-        if href.startswith("/app/") or href.startswith("https://store.steampowered.com/app/"):
-            full_link = steam_store_domain + href if href.startswith("/app/") else href
-            if full_link != url.decode('utf-8'):
-                links.append(full_link)
+        if href.startswith("/") or href.startswith(STEAM_STORE_DOMAIN):
+            full_link = STEAM_STORE_DOMAIN + href if href.startswith("/") else href
+            normalized_link = normalize_url(full_link)
+            if normalized_link not in graveyard:
+                links.append(normalized_link)
 
     # Remove duplicates
     links = list(set(links))
 
     print("Valid links found:", links)
 
-    # Push valid links onto Redis
+    # Push valid links onto Redis and add them to the graveyard
     if links:
         r.lpush("links", *links)
-        mongo.add_links(url, links)
+        mongo.add_links(url.encode('utf-8'), links)
+        for link in links:
+            graveyard.add(link)
     else:
         print("No valid links found on this page.")
 
@@ -84,10 +115,16 @@ browser = ms.StatefulBrowser()
 start_url = "https://store.steampowered.com/app/208650/Batman_Arkham_Knight/"
 r.lpush("links", start_url)
 
+# Add the Steam home page to the Redis queue to start the crawl from home as well
+r.lpush("links", STEAM_STORE_DOMAIN)
+
+# Initialize the graveyard set to keep track of visited URLs
+graveyard = set()
+
 # Start crawl
 crawled_count = 0
 while link := r.rpop("links"):
-    if not crawl(browser, r, mongo, link, crawled_count):
+    if not crawl(browser, r, mongo, link, crawled_count, graveyard):
         break
     crawled_count += 1
 
