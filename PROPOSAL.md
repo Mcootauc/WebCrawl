@@ -2,7 +2,7 @@
 
 ## Objective
 
-The objective of this crawl is to trace the path from the "Batman: Arkham Knight" game page to the "God of War" game page on Steam by following related game links.
+This crawl aims to trace the path from the "Batman: Arkham Knight" game page to the "God of War" game page on Steam by following related game links.
 
 ## Scope
 
@@ -16,7 +16,7 @@ The crawl will focus on the following key pieces of information for each game pa
 
 1. **Initial Game Page**: "Batman: Arkham Knight"
     - URL: `https://store.steampowered.com/app/208650/Batman_Arkham_Knight/`
-2. **Enpoint Game Page**: "God of War"
+2. **Endpoint Game Page**: "God of War"
     - URL: `https://store.steampowered.com/app/1593500/God_of_War/`
 
 # Navigate to your project directory
