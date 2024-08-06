@@ -38,6 +38,19 @@ This project is a web crawler designed to trace the path from the "Batman: Arkha
 
 4. **Error Handling**:
     - The crawler includes retry logic for pages that fail to load, attempting to load each page up to three times before skipping.
+    
+5. **Future Visualization**:
+    - To enhance the analysis and visualization of the crawled data, I plan to integrate Elasticsearch for indexing and searching through the data. Elasticsearch will allow us to visualize the path and relationships between game pages using tools like Kibana:
+        - Indexing Data in Elasticsearch:
+            - The crawled data (URLs and links) will be indexed in Elasticsearch. Each document in the index will represent a page and its outgoing links.
+        - Data Visualization with Kibana:
+            - Graph Visualization:
+                - Use Kibana's graph capabilities to visualize the relationships between game pages as a network graph.
+                - Nodes will represent game pages, and edges will represent the links between them.
+            - Timeline Visualization:
+                - Visualize the sequence of crawled pages over time to understand the crawling process and the path taken.
+            - Search and Filter:
+                - Use Kibana's search and filter capabilities to explore specific parts of the network, such as filtering by specific game titles or link types.
 
 # Installation
 
