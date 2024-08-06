@@ -26,12 +26,17 @@ class MongoDBConnector:
         print("Clearing MongoDB")
         self.db.pages.delete_many({})
 
+def write_to_mongo(db, url, html):
+    # Skipping storing the HTML for faster performance
+    pass
+
+# avoids duplicate links that differ only in query parameters
 def normalize_url(url):
     parsed_url = urlparse(url)
     # Remove query parameters for normalization
     return urlunparse((parsed_url.scheme, parsed_url.netloc, parsed_url.path, '', '', ''))
 
-def crawl(browser, r, mongo, url, graveyard):
+def crawl(browser, r, mongo, url, graveyard, parent_map):
     url = url.decode('utf-8')
     print("Downloading url:", url)
 
@@ -72,6 +77,7 @@ def crawl(browser, r, mongo, url, graveyard):
             normalized_link = normalize_url(full_link)
             if normalized_link not in graveyard:
                 links.append(normalized_link)
+                parent_map[normalized_link] = normalized_current_url  # Track the parent-child relationship
 
     # Remove duplicates
     links = list(set(links))
@@ -88,6 +94,19 @@ def crawl(browser, r, mongo, url, graveyard):
         print("No valid links found on this page.")
 
     return True
+
+def reconstruct_path(parent_map, start_url, target_url):
+    path = []
+    current_url = target_url
+    while current_url != start_url:
+        path.append(current_url)
+        current_url = parent_map.get(current_url)
+        if current_url is None:
+            print("Error: Path not found.")
+            return []
+    path.append(start_url)
+    path.reverse()
+    return path
 
 ### MAIN ###
 
@@ -108,16 +127,18 @@ browser = ms.StatefulBrowser()
 start_url = "https://store.steampowered.com/app/208650/Batman_Arkham_Knight/"
 r.lpush("links", start_url)
 
-# Add the Steam home page to the Redis queue to start the crawl from home as well
-r.lpush("links", STEAM_STORE_DOMAIN)
-
 # Initialize the graveyard set to keep track of visited URLs
 graveyard = set()
 
+# Initialize the parent map to track the path
+parent_map = {}
+
 # Start crawl
 crawled_count = 0
+found = False
 while link := r.rpop("links"):
-    if not crawl(browser, r, mongo, link, graveyard):
+    if not crawl(browser, r, mongo, link, graveyard, parent_map):
+        found = True
         break
     crawled_count += 1
 
@@ -125,3 +146,12 @@ while link := r.rpop("links"):
 mongo.close()
 
 print(f"Crawl completed. Total pages crawled: {crawled_count}")
+
+# Reconstruct the path if the target was found
+if found:
+    path = reconstruct_path(parent_map, start_url, TARGET_URL)
+    print("Path from Batman: Arkham Knight to God of War:")
+    for p in path:
+        print(p)
+else:
+    print("God of War page not found.")
