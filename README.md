@@ -1,3 +1,6 @@
+<img width="1440" alt="Screenshot 2024-08-05 at 7 14 57 PM" src="https://github.com/user-attachments/assets/696a2309-d2aa-490e-9e06-df8f279ba2d9">
+<img width="1440" alt="Screenshot 2024-08-05 at 7 12 56 PM" src="https://github.com/user-attachments/assets/bc7c6e28-c554-4ef1-b82d-0919f68da7e8">
+
 # Steam Game Path Analysis Crawler
 
 ## Overview
